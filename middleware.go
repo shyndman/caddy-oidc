@@ -2,6 +2,7 @@ package caddy_oidc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -53,7 +54,12 @@ type OIDCMiddleware struct {
 	Policies Ruleset `json:"policies"`
 
 	provider *Provider
+	app      *App
 }
+
+// WellKnownJWKSURLPath is the well-known path that serves the JSON Web Key
+// Set of the user token signing key.
+const WellKnownJWKSURLPath = "/.well-known/jwks.json"
 
 func (mw *OIDCMiddleware) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
@@ -74,6 +80,16 @@ func (mw *OIDCMiddleware) CaddyModule() caddy.ModuleInfo {
 func (mw *OIDCMiddleware) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	for d.Next() {
 		if d.NextArg() {
+			// `oidc allow role1, role2` is shorthand for a role-based
+			// allow rule with the default provider.
+			if d.Val() == "allow" || d.Val() == "deny" {
+				if err := mw.unmarshalRoleLine(d); err != nil {
+					return err
+				}
+
+				continue
+			}
+
 			mw.Inherits = d.Val()
 		}
 
@@ -103,6 +119,36 @@ func (mw *OIDCMiddleware) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	return nil
 }
 
+// unmarshalRoleLine parses the single-line role shorthand of the oidc
+// directive: `oidc allow residents, media_consumers`.
+func (mw *OIDCMiddleware) unmarshalRoleLine(d *caddyfile.Dispenser) error {
+	var pol Rule
+
+	switch d.Val() {
+	case "allow":
+		pol.Action = ActionAllow
+	case "deny":
+		pol.Action = ActionDeny
+	}
+
+	var args []string
+
+	for d.NextArg() {
+		args = append(args, d.Val())
+	}
+
+	matcherConfig, err := json.Marshal(MatchRole{Roles: splitRoleArgs(args)})
+	if err != nil {
+		return err
+	}
+
+	pol.MatcherSetsRaw = caddy.ModuleMap{"role": matcherConfig}
+
+	mw.Policies = append(mw.Policies, &pol)
+
+	return nil
+}
+
 // Provision sets up the OIDCMiddleware by loading the configured OIDC provider
 // and then provisioning the configured ruleset for the middleware.
 // The named provider must be configured.
@@ -113,6 +159,8 @@ func (mw *OIDCMiddleware) Provision(ctx caddy.Context) error {
 	}
 
 	app := val.(*App) //nolint:forcetypeassert
+
+	mw.app = app
 
 	// Get the inherited provider configuration.
 	base, err := app.GetInheritedProvider(mw.Inherits)
@@ -200,6 +248,9 @@ func (mw *OIDCMiddleware) interceptRequest(rw http.ResponseWriter, r *http.Reque
 	if r.Method == http.MethodGet && r.URL.Path == WellKnownOAuthProtectedResourcePath {
 		return true, mw.provider.ServeHTTPOAuthProtectedResource(rw, r)
 	}
+	if r.Method == http.MethodGet && r.URL.Path == WellKnownJWKSURLPath {
+		return true, mw.serveJWKS(rw)
+	}
 
 	authMethod, s, err := mw.provider.Authenticators.AuthenticateRequest(mw.provider, r)
 	if err != nil {
@@ -232,6 +283,10 @@ func (mw *OIDCMiddleware) interceptRequest(rw http.ResponseWriter, r *http.Reque
 
 	switch result.Result {
 	case EvaluationResultAllow:
+		if err := mw.mintUserToken(r, s); err != nil {
+			return false, err
+		}
+
 		return false, nil
 	case EvaluationResultExplicitDeny:
 	case EvaluationResultImplicitDeny:
@@ -256,6 +311,64 @@ func (mw *OIDCMiddleware) interceptRequest(rw http.ResponseWriter, r *http.Reque
 	}
 
 	return false, caddyhttp.Error(http.StatusForbidden, ErrAccessDenied)
+}
+
+// mintUserToken signs a user token for an authenticated request that the
+// downstream application will receive as an Authorization header.
+// It mints nothing when user_token is not configured or the request is
+// anonymous, and returns an error only when signing genuinely fails.
+func (mw *OIDCMiddleware) mintUserToken(r *http.Request, s *session.Session) error {
+	if mw.app == nil || mw.app.minter == nil {
+		return nil
+	}
+
+	if s == nil || s.Anonymous {
+		return nil
+	}
+
+	email := gjson.GetBytes(s.Claims, "email")
+	if !email.Exists() || email.Type != gjson.String {
+		return nil
+	}
+
+	var (
+		name  string
+		roles []string
+	)
+
+	if dir := mw.app.Directory(); dir != nil {
+		if u, ok := dir.User(email.String()); ok {
+			name = u.Name
+			roles = u.Roles
+		}
+	}
+
+	tokenString, err := mw.app.minter.Sign(mw.provider.Issuer, email.String(), name, roles, mw.provider.Now(), s.Expires())
+	if err != nil {
+		return err
+	}
+
+	r.Header.Set("Authorization", "Bearer "+tokenString)
+
+	return nil
+}
+
+// serveJWKS writes the public key for user token verification at the well-known
+// JWKS path. It returns 404 when user_token is not configured.
+func (mw *OIDCMiddleware) serveJWKS(rw http.ResponseWriter) error {
+	if mw.app == nil || mw.app.minter == nil {
+		return caddyhttp.Error(http.StatusNotFound, errors.New("user_token is not configured"))
+	}
+
+	payload, err := mw.app.minter.JWKS()
+	if err != nil {
+		return err
+	}
+
+	rw.Header().Set("Content-Type", "application/jwk-set+json")
+	_, _ = rw.Write(payload)
+
+	return nil
 }
 
 // ServeHTTP implements caddyhttp.MiddlewareHandler.
