@@ -19,6 +19,7 @@ func init() {
 	caddy.RegisterModule(new(MatchAnonymous))
 	caddy.RegisterModule(new(MatchClaim))
 	caddy.RegisterModule(new(MatchAuthMethod))
+	caddy.RegisterModule(new(MatchRole))
 }
 
 // MatchWildcard matches a possible wildcard pattern against a value.
@@ -310,4 +311,89 @@ func (m *MatchAuthMethod) MatchWithError(r *http.Request) (bool, error) {
 	}
 
 	return slices.Contains(m.Match, authMethod), nil
+}
+
+var (
+	_ caddy.Module                      = (*MatchRole)(nil)
+	_ caddy.Provisioner                 = (*MatchRole)(nil)
+	_ caddyfile.Unmarshaler             = (*MatchRole)(nil)
+	_ caddyhttp.RequestMatcherWithError = (*MatchRole)(nil)
+)
+
+// MatchRole matches a session against the roles stored in the authorization
+// directory. A session matches when the email claim of the session maps to a
+// user that holds at least one of the configured roles.
+// An anonymous session has no email claim, so it never matches.
+type MatchRole struct {
+	Roles []string `json:"roles,omitempty"`
+
+	// app is the oidc app that holds the authorization directory. It is set
+	// during Provision and read at request time, after Start has loaded the
+	// directory.
+	app *App
+}
+
+func (*MatchRole) CaddyModule() caddy.ModuleInfo {
+	return caddy.ModuleInfo{
+		ID:  "http.matchers.role",
+		New: func() caddy.Module { return new(MatchRole) },
+	}
+}
+
+func (m *MatchRole) Provision(ctx caddy.Context) error {
+	val, err := ctx.AppIfConfigured(moduleID)
+	if err != nil {
+		return err
+	}
+
+	m.app = val.(*App) //nolint:forcetypeassert
+
+	return nil
+}
+
+func (m *MatchRole) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
+	for d.Next() {
+		var role string
+		if !d.Args(&role) {
+			return d.ArgErr()
+		}
+
+		m.Roles = append(m.Roles, role)
+	}
+
+	return nil
+}
+
+func (m *MatchRole) MatchWithError(r *http.Request) (bool, error) {
+	s, ok := r.Context().Value(SessionCtxKey).(*session.Session)
+	if !ok || s.Anonymous {
+		return false, nil
+	}
+
+	if len(m.Roles) == 0 {
+		return false, nil
+	}
+
+	if m.app == nil || m.app.Directory() == nil {
+		return false, errors.New("role matcher requires a configured postgres directory")
+	}
+
+	email := gjson.GetBytes(s.Claims, "email")
+	if !email.Exists() || email.Type != gjson.String {
+		return false, nil
+	}
+
+	for _, role := range m.Roles {
+		if m.app.Directory().HasRole(email.String(), role) {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func (m *MatchRole) Match(r *http.Request) bool {
+	ok, _ := m.MatchWithError(r)
+
+	return ok
 }

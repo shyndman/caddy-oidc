@@ -92,3 +92,4 @@ linters:
             - github.com/munnerz/goautoneg
             - github.com/stretchr/testify
             - github.com/huandu/go-clone
+            - github.com/jackc/pgx/v5

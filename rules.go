@@ -1,9 +1,11 @@
 package caddy_oidc
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
@@ -92,18 +94,58 @@ func (rules *Ruleset) UnmarshalCaddyfileToken(d *caddyfile.Dispenser) (bool, err
 		return false, nil
 	}
 
-	_ = d.Args(&pol.ID)
+	// Arguments after the action select one of two forms:
+	//   - matcher-set rules (allow <id> { ... }): a block always follows
+	//   - role shorthand (allow role1, role2): bare arguments, no block
+	args := d.RemainingArgs()
 
-	var err error
+	blockFollows := false
+	if d.Next() {
+		blockFollows = d.Val() == "{"
+		d.Prev()
+	}
 
-	pol.MatcherSetsRaw, err = caddyhttp.ParseCaddyfileNestedMatcherSet(d)
-	if err != nil {
-		return false, err
+	if blockFollows || len(args) == 0 {
+		// Matcher-set rule: an optional ID, then a matcher block.
+		if len(args) > 0 {
+			pol.ID = args[0]
+		}
+
+		var err error
+
+		pol.MatcherSetsRaw, err = caddyhttp.ParseCaddyfileNestedMatcherSet(d)
+		if err != nil {
+			return false, err
+		}
+	} else {
+		// Role shorthand: the arguments are role names.
+		matcherConfig, err := json.Marshal(MatchRole{Roles: splitRoleArgs(args)})
+		if err != nil {
+			return false, err
+		}
+
+		pol.MatcherSetsRaw = caddy.ModuleMap{"role": matcherConfig}
 	}
 
 	*rules = append(*rules, &pol)
 
 	return true, nil
+}
+
+// splitRoleArgs splits Caddyfile role arguments on commas, trimming
+// surrounding whitespace. It supports both "role1, role2" and "role1 role2".
+func splitRoleArgs(args []string) []string {
+	var roles []string
+
+	for _, arg := range args {
+		for _, part := range strings.Split(arg, ",") {
+			if role := strings.TrimSpace(part); role != "" {
+				roles = append(roles, role)
+			}
+		}
+	}
+
+	return roles
 }
 
 // UnmarshalCaddyfile sets up the Ruleset from Caddyfile tokens.

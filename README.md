@@ -144,6 +144,8 @@ example.com {
 | `protected_resource_metadata` | (optional) Configure or disable RFC9728 support.                                                                                                      |          |
 | `authenticate`                | (optional) Configure [authentication methods](#authentication)                                                                                        |          |
 | `token_params`                | (optional) Additional key-value parameters for the OAuth code exchange. Values support Caddy placeholders. See [Token Parameters](#token-parameters). |          |
+| `postgres <url>`              | (optional) The connection string for a read-only PostgreSQL database that supplies the [authorization directory](#authorization-directory).                  |          |
+| `user_token`                  | (optional) Configure the signed [user token](#user-token) for downstream services.                                                                      |          |
 
 ### Default Provider
 
@@ -161,6 +163,81 @@ explicitly configure a provider.
     }
 }
 ```
+
+### Authorization Directory
+
+`postgres` configures the authorization directory. The directory stores the users, the roles, and the links between the users and the roles.
+
+The schema lives in `schema.sql` at the repository root. The proxy never writes to the database. It connects with a read-only role that holds SELECT grants only. Apply the schema with a separate writable role during setup.
+
+The proxy loads the directory into memory when the configuration starts. A Caddy `reload` builds a new configuration, so the proxy reloads the directory at each reload. The proxy does not touch the database at request time. If the database is unreachable, the reload fails and Caddy keeps serving the previous configuration.
+
+The identity of a session is the email claim. The session must carry the email claim for the directory and the user token to work. With the cookie authenticator, copy the claim with the `claim email` option.
+
+```caddyfile
+{
+    oidc {
+        issuer https://accounts.google.com
+        client_id "{env.OAUTH_CLIENT_ID}"
+
+        postgres "postgresql://caddy_ro:...@db:5432/homelab?sslmode=require"
+
+        authenticate cookie {
+            name caddy
+            secret "{env.COOKIE_SECRET}"
+            claim email
+        }
+    }
+}
+```
+
+#### Role Shorthand
+
+`allow` and `deny` accept a comma-separated list of role names. A rule matches when the session user holds any of the roles.
+
+```caddyfile
+# Allow residents and media consumers, deny guests
+
+oidc allow residents, media_consumers
+```
+
+Each clause is optional, but the directive must contain at least one `allow` rule. The role shorthand coexists with matcher-based rules.
+
+```caddyfile
+oidc {
+    allow residents, media_consumers
+    allow {
+        anonymous
+        path /healthcheck
+    }
+    deny guests
+}
+```
+
+The shorthand `oidc allow residents, media_consumers` on a single line uses the default provider. Use the block form when a provider name or further configuration is needed.
+
+### User Token
+
+`user_token` configures a signed user token. After authorization passes, the proxy mints a fresh token for the authenticated user. It sends the token to the application as an `Authorization: Bearer` header.
+
+The token carries the email as the subject, the roles, the display name, the issue time, and the expiry. The expiry matches the session expiry.
+
+The token replaces the claim headers as the identity mechanism for application servers. Application servers verify the signature and read the identity directly. They need no session store and no database access.
+
+The proxy signs the token with an ES256 (P-256) private key. The key may be in PKCS#8 or SEC1 form.
+
+```caddyfile
+user_token {
+    private_key "{env.USER_TOKEN_PRIVATE_KEY}"
+}
+```
+
+The `private_key` option supports Caddy placeholders, such as `{env.USER_TOKEN_PRIVATE_KEY}` or `{file./path/to/key}`.
+
+The proxy exposes the public key for verification at `/.well-known/jwks.json`. The endpoint requires no authentication.
+
+> [!NOTE]
+> The proxy mints a fresh token for each request. Token roles always reflect the current directory. Role changes take effect at the next reload.
 
 ### Authentication
 
@@ -385,7 +462,7 @@ then it uses that, otherwise it inherits the global defaults. See [Inheritance](
 
 A route is only authenticated by `caddy-oidc` if it is configured with at least once `oidc` handler directive.
 
-The handler directive **must** contain at least one `allow` rule.
+The handler directive **must** contain at least one `allow` rule. The rule can be matcher-based or a [role shorthand](#role-shorthand).
 
 If the request is unauthenticated, and there is not an explicit `allow` or `deny` rule that matches the request,
 and the request is made by a browser, then the browser will be automatically redirected to the OIDC provider for
@@ -564,6 +641,30 @@ allow {
     claim role read:*
 }
 ```
+
+#### Role
+
+Matches the roles of the authenticated user from the authorization directory.
+
+A role match reads the email claim of the session and looks the user up in the directory. It matches when the user holds any of the configured roles. Multiple roles are treated as a logical OR.
+
+```caddyfile
+# Allow any user with the admin role
+
+allow {
+    role admin
+}
+```
+
+```caddyfile
+# Allow any user with the admin or residents role
+
+allow {
+    role admin residents
+}
+```
+
+A role match requires the authorization directory. Without a configured `postgres` directory, a role matcher returns an error.
 
 ### Auth Method
 
