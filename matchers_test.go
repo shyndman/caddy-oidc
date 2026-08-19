@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/caddyserver/caddy/v2"
-	"github.com/relvacode/caddy-oidc/authenticator"
-	"github.com/relvacode/caddy-oidc/session"
+	"github.com/shyndman/caddy-oidc/authenticator"
+	"github.com/shyndman/caddy-oidc/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

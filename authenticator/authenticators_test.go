@@ -11,8 +11,8 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/coreos/go-oidc/v3/oidc"
-	"github.com/relvacode/caddy-oidc/internal/pkgtest"
-	"github.com/relvacode/caddy-oidc/session"
+	"github.com/shyndman/caddy-oidc/internal/pkgtest"
+	"github.com/shyndman/caddy-oidc/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

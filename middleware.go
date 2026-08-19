@@ -10,10 +10,10 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
-	"github.com/relvacode/caddy-oidc/authenticator"
-	"github.com/relvacode/caddy-oidc/internal/baseline"
-	"github.com/relvacode/caddy-oidc/request"
-	"github.com/relvacode/caddy-oidc/session"
+	"github.com/shyndman/caddy-oidc/authenticator"
+	"github.com/shyndman/caddy-oidc/internal/baseline"
+	"github.com/shyndman/caddy-oidc/request"
+	"github.com/shyndman/caddy-oidc/session"
 	"github.com/tidwall/gjson"
 )
 
