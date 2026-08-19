@@ -18,7 +18,7 @@ configured individually, perform authentication and authorization at the Caddy l
 Installation can be done either via the provided Docker image (Caddy with only caddy-oidc installed)
 
 ```
-ghcr.io/relvacode/caddy-oidc:latest
+ghcr.io/shyndman/caddy-oidc:latest
 ```
 
 Or by building caddy with this plugin via [xcaddy](https://github.com/caddyserver/xcaddy)
@@ -26,7 +26,7 @@ Or by building caddy with this plugin via [xcaddy](https://github.com/caddyserve
 ```Dockerfile
 FROM caddy:builder AS builder
 RUN xcaddy build \
-    --with github.com/relvacode/caddy-oidc
+    --with github.com/shyndman/caddy-oidc
 ```
 
 # Configuration

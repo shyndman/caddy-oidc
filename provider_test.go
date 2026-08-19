@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
-	"github.com/relvacode/caddy-oidc/authenticator"
-	"github.com/relvacode/caddy-oidc/internal/deferred"
-	"github.com/relvacode/caddy-oidc/internal/pkgtest"
+	"github.com/shyndman/caddy-oidc/authenticator"
+	"github.com/shyndman/caddy-oidc/internal/deferred"
+	"github.com/shyndman/caddy-oidc/internal/pkgtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"

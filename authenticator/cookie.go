@@ -16,8 +16,8 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/google/uuid"
 	"github.com/gorilla/securecookie"
-	"github.com/relvacode/caddy-oidc/request"
-	"github.com/relvacode/caddy-oidc/session"
+	"github.com/shyndman/caddy-oidc/request"
+	"github.com/shyndman/caddy-oidc/session"
 	"golang.org/x/oauth2"
 )
 

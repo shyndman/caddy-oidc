@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
-	"github.com/relvacode/caddy-oidc/internal/pkgtest"
+	"github.com/shyndman/caddy-oidc/internal/pkgtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
