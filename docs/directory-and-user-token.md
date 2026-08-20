@@ -4,7 +4,7 @@
 
 This fork adds authorization roles from a PostgreSQL database to caddy-oidc. It also mints a signed user token for application servers.
 
-The reverse proxy holds a read-only connection to the database. The database stores the users, the roles, and the links between them. The proxy loads this data into memory when the configuration starts. A Caddy reload builds a new configuration. The proxy loads the data again at each reload.
+Each configuration initializes one directory snapshot. The proxy loads the users, the roles, and the links between them into memory when the configuration starts. An early request can force the same one-time load and waits for it. A Caddy reload builds a new configuration. The proxy loads a new snapshot at each reload.
 
 ## Configuration
 
@@ -33,7 +33,7 @@ The global `oidc` directive gains two options.
 
 `postgres` sets the connection string for the database. The PostgreSQL role that the connection uses holds SELECT grants only.
 
-`user_token` enables the minted user token. `private_key` supplies the ES256 private key in PEM form. The proxy resolves placeholder values at provision time.
+`user_token` enables the minted user token. `private_key` supplies the ES256 private key in PEM form. The proxy resolves placeholder values at one-time initialization.
 
 ### Handler
 
@@ -125,6 +125,6 @@ The endpoint requires no authentication. Application servers fetch the public ke
 
 ## Reload Behavior
 
-A Caddy reload builds a new configuration. The new configuration loads the directory from PostgreSQL again. If the database is unreachable, the reload fails. Caddy keeps serving the old configuration.
+A Caddy reload builds a new configuration. The new configuration loads the directory from PostgreSQL again. An early request can force the same one-time load and waits for it. If the database is unreachable, the reload fails. Caddy keeps serving the old configuration.
 
 The proxy never touches the database at request time. It uses the database only at configuration load. If the database fails mid-flight, the proxy keeps serving with the loaded snapshot.

@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -93,6 +94,15 @@ func testMinter(t *testing.T, pemBytes []byte) *token.Minter {
 	return m
 }
 
+// testAppWithRuntime returns an App whose runtime initializer returns the
+// given prebuilt state, so a test can isolate request-time behavior without
+// forcing database access or key parsing.
+func testAppWithRuntime(runtime *appRuntime) *App {
+	a := newApp()
+	a.loadRuntime = sync.OnceValues(func() (*appRuntime, error) { return runtime, nil })
+	return a
+}
+
 func generateTestPrivateKey(t *testing.T) ([]byte, *ecdsa.PrivateKey) {
 	t.Helper()
 
@@ -108,7 +118,7 @@ func generateTestPrivateKey(t *testing.T) ([]byte, *ecdsa.PrivateKey) {
 func TestMatchRole_MatchWithError(t *testing.T) {
 	t.Parallel()
 
-	app := &App{dir: testDirectory(t)}
+	app := testAppWithRuntime(&appRuntime{directory: testDirectory(t)})
 
 	tests := []struct {
 		name    string
@@ -192,7 +202,7 @@ func TestMatchRole_MatchWithError_EmptyRoles(t *testing.T) {
 		Claims: json.RawMessage(`{"email": "x@example.org"}`),
 	}))
 
-	matcher := &MatchRole{app: &App{dir: testDirectory(t)}}
+	matcher := &MatchRole{app: testAppWithRuntime(&appRuntime{directory: testDirectory(t)})}
 
 	got, err := matcher.MatchWithError(r)
 	require.NoError(t, err)
@@ -207,7 +217,7 @@ func TestMatchRole_MatchWithError_NoDirectory(t *testing.T) {
 		Claims: json.RawMessage(`{"email": "x@example.org"}`),
 	}))
 
-	matcher := &MatchRole{Roles: []string{"admin"}, app: &App{}}
+	matcher := &MatchRole{Roles: []string{"admin"}, app: testAppWithRuntime(&appRuntime{})}
 
 	_, err := matcher.MatchWithError(r)
 	require.Error(t, err)
@@ -298,7 +308,7 @@ func TestOIDCMiddleware_MintsUserToken(t *testing.T) {
 
 	auth := &OIDCMiddleware{
 		provider: GenerateTestProvider(),
-		app:      &App{minter: testMinter(t, pemBytes), dir: testDirectory(t)},
+		app:      testAppWithRuntime(&appRuntime{minter: testMinter(t, pemBytes), directory: testDirectory(t)}),
 		Policies: Ruleset{
 			{
 				Action: ActionAllow,
@@ -348,7 +358,7 @@ func TestOIDCMiddleware_MintsUserToken_NormalizesEmail(t *testing.T) {
 
 	auth := &OIDCMiddleware{
 		provider: GenerateTestProvider(),
-		app:      &App{minter: testMinter(t, pemBytes), dir: testDirectory(t)},
+		app:      testAppWithRuntime(&appRuntime{minter: testMinter(t, pemBytes), directory: testDirectory(t)}),
 	}
 
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -381,7 +391,7 @@ func TestOIDCMiddleware_MintsNoToken_WhenNotConfigured(t *testing.T) {
 
 	auth := &OIDCMiddleware{
 		provider: GenerateTestProvider(),
-		app:      &App{dir: testDirectory(t)},
+		app:      testAppWithRuntime(&appRuntime{directory: testDirectory(t)}),
 		Policies: Ruleset{
 			{
 				Action: ActionAllow,
@@ -411,7 +421,7 @@ func TestOIDCMiddleware_ServeHTTP_WellKnownJWKS(t *testing.T) {
 
 	auth := &OIDCMiddleware{
 		provider: GenerateTestProvider(),
-		app:      &App{minter: testMinter(t, pemBytes)},
+		app:      testAppWithRuntime(&appRuntime{minter: testMinter(t, pemBytes)}),
 	}
 
 	w := httptest.NewRecorder()
@@ -432,7 +442,7 @@ func TestOIDCMiddleware_ServeHTTP_WellKnownJWKS_NotConfigured(t *testing.T) {
 
 	auth := &OIDCMiddleware{
 		provider: GenerateTestProvider(),
-		app:      &App{},
+		app:      testAppWithRuntime(&appRuntime{}),
 	}
 
 	w := httptest.NewRecorder()

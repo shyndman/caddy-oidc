@@ -319,7 +319,7 @@ func (mw *OIDCMiddleware) interceptRequest(rw http.ResponseWriter, r *http.Reque
 // It mints nothing when user_token is not configured or the request is
 // anonymous, and returns an error only when signing genuinely fails.
 func (mw *OIDCMiddleware) mintUserToken(r *http.Request, s *session.Session) error {
-	if mw.app == nil || mw.app.minter == nil {
+	if mw.app == nil {
 		return nil
 	}
 
@@ -332,6 +332,15 @@ func (mw *OIDCMiddleware) mintUserToken(r *http.Request, s *session.Session) err
 		return nil
 	}
 
+	rt, err := mw.app.runtime()
+	if err != nil {
+		return err
+	}
+
+	if rt.minter == nil {
+		return nil
+	}
+
 	normalizedEmail := directory.NormalizeEmail(email.String())
 
 	var (
@@ -339,14 +348,14 @@ func (mw *OIDCMiddleware) mintUserToken(r *http.Request, s *session.Session) err
 		roles []string
 	)
 
-	if dir := mw.app.Directory(); dir != nil {
-		if u, ok := dir.User(normalizedEmail); ok {
+	if rt.directory != nil {
+		if u, ok := rt.directory.User(normalizedEmail); ok {
 			name = u.Name
 			roles = u.Roles
 		}
 	}
 
-	tokenString, err := mw.app.minter.Sign(mw.provider.Issuer, normalizedEmail, name, roles, mw.provider.Now(), s.Expires())
+	tokenString, err := rt.minter.Sign(mw.provider.Issuer, normalizedEmail, name, roles, mw.provider.Now(), s.Expires())
 	if err != nil {
 		return err
 	}
@@ -359,11 +368,20 @@ func (mw *OIDCMiddleware) mintUserToken(r *http.Request, s *session.Session) err
 // serveJWKS writes the public key for user token verification at the well-known
 // JWKS path. It returns 404 when user_token is not configured.
 func (mw *OIDCMiddleware) serveJWKS(rw http.ResponseWriter) error {
-	if mw.app == nil || mw.app.minter == nil {
+	if mw.app == nil {
 		return caddyhttp.Error(http.StatusNotFound, errors.New("user_token is not configured"))
 	}
 
-	payload, err := mw.app.minter.JWKS()
+	rt, err := mw.app.runtime()
+	if err != nil {
+		return err
+	}
+
+	if rt.minter == nil {
+		return caddyhttp.Error(http.StatusNotFound, errors.New("user_token is not configured"))
+	}
+
+	payload, err := rt.minter.JWKS()
 	if err != nil {
 		return err
 	}

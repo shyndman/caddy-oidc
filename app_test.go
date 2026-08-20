@@ -2,10 +2,16 @@ package caddy_oidc
 
 import (
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
+	"github.com/go-jose/go-jose/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -152,4 +158,103 @@ func parseGlobalOIDCConfig(t *testing.T, prev any, input string) (httpcaddyfile.
 	require.NoError(t, err)
 
 	return globalApp, app
+}
+
+// TestAppRuntime_RequestForcesInitializationBeforeStart proves the production
+// path: a request can trigger the one-time load before Start runs, and Start
+// then reports success without re-initializing.
+func TestAppRuntime_RequestForcesInitializationBeforeStart(t *testing.T) {
+	t.Parallel()
+
+	pemBytes, _ := generateTestPrivateKey(t)
+
+	a := newApp()
+	a.UserToken = &UserTokenConfig{PrivateKey: string(pemBytes)}
+
+	mw := &OIDCMiddleware{app: a, provider: GenerateTestProvider()}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, WellKnownJWKSURLPath, nil)
+
+	err := mw.ServeHTTP(w, r, new(TestHandler))
+	require.NoError(t, err)
+	assert.Equal(t, "application/jwk-set+json", w.Header().Get("Content-Type"))
+
+	var set jose.JSONWebKeySet
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &set))
+	assert.Len(t, set.Keys, 1)
+	require.NotEmpty(t, set.Keys[0].KeyID)
+
+	require.NoError(t, a.Start())
+}
+
+// TestAppRuntime_ConcurrentInitializersRunOnce proves that concurrent request
+// and Start paths wait for one initializer and observe the same runtime.
+func TestAppRuntime_ConcurrentInitializersRunOnce(t *testing.T) {
+	t.Parallel()
+
+	var (
+		count   atomic.Int32
+		started = make(chan struct{})
+		release = make(chan struct{})
+		got     *appRuntime
+	)
+
+	rt := sync.OnceValues(func() (*appRuntime, error) {
+		count.Add(1)
+		started <- struct{}{}
+		<-release
+		return &appRuntime{}, nil
+	})
+
+	a := newApp()
+	a.loadRuntime = rt
+
+	results := make(chan error, 2)
+	fromRequest := func() {
+		r, err := a.runtime()
+		if err == nil {
+			got = r
+		}
+		results <- err
+	}
+	fromStart := func() {
+		results <- a.Start()
+	}
+
+	go fromRequest()
+	go fromStart()
+
+	<-started
+	release <- struct{}{}
+
+	err1 := <-results
+	err2 := <-results
+	require.NoError(t, err1)
+	require.NoError(t, err2)
+	require.Equal(t, int32(1), count.Load())
+	assert.Equal(t, &appRuntime{}, got)
+}
+
+// TestAppRuntime_ErrorsAreCached proves that an initialization failure from a
+// request-first call is cached, so the later Start call returns the same
+// failure without re-running the initializer.
+func TestAppRuntime_ErrorsAreCached(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("database unreachable")
+	count := atomic.Int32{}
+
+	a := newApp()
+	a.loadRuntime = sync.OnceValues(func() (*appRuntime, error) {
+		count.Add(1)
+		return nil, sentinel
+	})
+
+	_, err1 := a.runtime()
+	assert.Same(t, sentinel, err1)
+
+	err2 := a.Start()
+	assert.Same(t, sentinel, err2)
+
+	require.Equal(t, int32(1), count.Load())
 }
