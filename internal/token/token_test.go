@@ -155,4 +155,17 @@ func TestJWKS(t *testing.T) {
 	require.IsType(t, &ecdsa.PublicKey{}, k.Key)
 	require.True(t, k.IsPublic())
 	assert.NotContains(t, string(raw), `"d"`)
+
+	sig, err := m.Sign("iss", "sub", "", nil, time.Now(), time.Time{})
+	require.NoError(t, err)
+
+	jws, err := jose.ParseSignedCompact(sig, []jose.SignatureAlgorithm{jose.ES256})
+	require.NoError(t, err)
+	require.Len(t, jws.Signatures, 1)
+
+	keys := set.Key(jws.Signatures[0].Header.KeyID)
+	require.Len(t, keys, 1)
+
+	_, err = jws.Verify(keys[0].Key)
+	require.NoError(t, err)
 }
