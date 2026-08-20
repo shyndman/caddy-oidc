@@ -86,6 +86,55 @@ func TestParseGlobalConfig_DefaultChangesAfterNamedProviderAreReflected(t *testi
 	assert.Equal(t, []string{"profile"}, named.Scope)
 }
 
+func TestParseGlobalConfig_AppDirectivesAcceptedInDefaultBlock(t *testing.T) {
+	t.Parallel()
+
+	_, app := parseGlobalOIDCConfig(t, nil, `oidc {
+		postgres postgres://directory
+		user_token {
+			private_key /run/secrets/user-token.pem
+		}
+	}`)
+
+	assert.Equal(t, "postgres://directory", app.Postgres)
+	require.NotNil(t, app.UserToken)
+	assert.Equal(t, "/run/secrets/user-token.pem", app.UserToken.PrivateKey)
+}
+
+func TestParseGlobalConfig_AppDirectivesRejectedInNamedProvider(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name: "postgres",
+			input: `oidc named {
+				postgres postgres://directory
+			}`,
+		},
+		{
+			name: "user_token",
+			input: `oidc named {
+				user_token {
+					private_key /run/secrets/user-token.pem
+				}
+			}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			d := caddyfile.NewTestDispenser(tt.input)
+			_, err := parseGlobalConfig(d, nil)
+			require.ErrorContains(t, err, "unrecognized subdirective")
+		})
+	}
+}
+
 func parseGlobalOIDCConfig(t *testing.T, prev any, input string) (httpcaddyfile.App, App) {
 	t.Helper()
 
