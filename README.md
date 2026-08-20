@@ -170,7 +170,7 @@ explicitly configure a provider.
 
 The schema lives in `schema.sql` at the repository root. The proxy never writes to the database. It connects with a read-only role that holds SELECT grants only. Apply the schema with a separate writable role during setup.
 
-The proxy loads the directory into memory when the configuration starts. A Caddy `reload` builds a new configuration, so the proxy reloads the directory at each reload. The proxy does not touch the database at request time. If the database is unreachable, the reload fails and Caddy keeps serving the previous configuration.
+Each configuration initializes one directory snapshot. Caddy normally initializes the directory when the app starts. An early request can force the same one-time load and waits for it. The proxy does not touch the database after initialization. A Caddy `reload` builds a new configuration, so the proxy loads a new snapshot at each reload. If the database is unreachable, the reload fails and Caddy keeps serving the previous configuration.
 
 The identity of a session is the email claim. The session must carry the email claim for the directory and the user token to work. With the cookie authenticator, copy the claim with the `claim email` option.
 

@@ -328,8 +328,9 @@ type MatchRole struct {
 	Roles []string `json:"roles,omitempty"`
 
 	// app is the oidc app that holds the authorization directory. It is set
-	// during Provision and read at request time, after Start has loaded the
-	// directory.
+	// during Provision and read at request time. The directory is initialized
+	// once, normally by Start, but the first request can force it and waits
+	// for the completed load.
 	app *App
 }
 
@@ -374,7 +375,16 @@ func (m *MatchRole) MatchWithError(r *http.Request) (bool, error) {
 		return false, nil
 	}
 
-	if m.app == nil || m.app.Directory() == nil {
+	if m.app == nil {
+		return false, errors.New("role matcher requires a configured postgres directory")
+	}
+
+	rt, err := m.app.runtime()
+	if err != nil {
+		return false, err
+	}
+
+	if rt.directory == nil {
 		return false, errors.New("role matcher requires a configured postgres directory")
 	}
 
@@ -384,7 +394,7 @@ func (m *MatchRole) MatchWithError(r *http.Request) (bool, error) {
 	}
 
 	for _, role := range m.Roles {
-		if m.app.Directory().HasRole(email.String(), role) {
+		if rt.directory.HasRole(email.String(), role) {
 			return true, nil
 		}
 	}

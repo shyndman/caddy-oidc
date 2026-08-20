@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
@@ -162,8 +163,31 @@ type App struct {
 	// authenticated user to downstream services.
 	UserToken *UserTokenConfig `json:"user_token,omitempty"`
 
-	dir    *directory.Directory
-	minter *token.Minter
+	// loadRuntime initializes once and caches the authorization directory and
+	// user token signer. It is normally forced by Start, but an early request
+	// can force the same one-time load and wait for its result.
+	loadRuntime func() (*appRuntime, error)
+}
+
+// appRuntime is the immutable runtime state of the app. It is published as a
+// unit so no reader observes a partially initialized directory or signer.
+type appRuntime struct {
+	directory *directory.Directory
+	minter    *token.Minter
+}
+
+// newApp creates an App with a one-time runtime initializer that reads the
+// decoded configuration only when first invoked.
+func newApp() *App {
+	a := new(App)
+	a.loadRuntime = sync.OnceValues(a.initializeRuntime)
+	return a
+}
+
+// runtime forces or returns the loaded runtime state. It returns the same
+// complete value to every caller, or the same cached error.
+func (a *App) runtime() (*appRuntime, error) {
+	return a.loadRuntime()
 }
 
 // UserTokenConfig holds the configuration for the signed user token.
@@ -177,7 +201,7 @@ type UserTokenConfig struct {
 func (*App) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
 		ID:  moduleID,
-		New: func() caddy.Module { return new(App) },
+		New: func() caddy.Module { return newApp() },
 	}
 }
 
@@ -185,63 +209,69 @@ func (*App) CaddyModule() caddy.ModuleInfo {
 // unreachable database cannot hang the proxy indefinitely.
 const directoryLoadTimeout = 10 * time.Second
 
-// Start loads the authorization directory and prepares the user token signer.
+// Start forces the one-time runtime initialization and reports its result.
 // On failure, the configuration fails to load and Caddy keeps serving the
-// previous configuration. The proxy never touches the database at request
-// time; Start is the only point at which the database is used.
+// previous configuration. After initialization, request paths use the cached
+// directory and signer; they never touch the database.
 func (a *App) Start() error {
-	if a.Postgres != "" {
-		if err := a.loadDirectory(); err != nil {
-			return fmt.Errorf("oidc: load authorization directory: %w", err)
-		}
-	}
-
-	if a.UserToken != nil {
-		if err := a.setupMinter(); err != nil {
-			return fmt.Errorf("oidc: set up user token signer: %w", err)
-		}
-	}
-
-	return nil
+	_, err := a.runtime()
+	return err
 }
 
 func (*App) Stop() error { return nil }
 
-// Directory returns the loaded authorization directory. It is nil when no
-// database is configured, or before Start has run.
-func (a *App) Directory() *directory.Directory { return a.dir }
+// initializeRuntime constructs the authorization directory and user token
+// signer as local values and publishes them together. It returns no partial
+// state after a failure.
+func (a *App) initializeRuntime() (*appRuntime, error) {
+	rt := &appRuntime{}
 
-func (a *App) loadDirectory() error {
+	if a.Postgres != "" {
+		dir, err := a.loadDirectory()
+		if err != nil {
+			return nil, fmt.Errorf("oidc: load authorization directory: %w", err)
+		}
+		rt.directory = dir
+	}
+
+	if a.UserToken != nil {
+		minter, err := a.createMinter()
+		if err != nil {
+			return nil, fmt.Errorf("oidc: set up user token signer: %w", err)
+		}
+		rt.minter = minter
+	}
+
+	return rt, nil
+}
+
+func (a *App) loadDirectory() (*directory.Directory, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), directoryLoadTimeout)
 	defer cancel()
 
 	conn, err := pgx.Connect(ctx, a.Postgres)
 	if err != nil {
-		return fmt.Errorf("connect to postgres: %w", err)
+		return nil, fmt.Errorf("connect to postgres: %w", err)
 	}
 	defer conn.Close(context.Background())
 
 	dir, err := directory.Load(ctx, conn)
 	if err != nil {
-		return fmt.Errorf("load directory: %w", err)
+		return nil, fmt.Errorf("load directory: %w", err)
 	}
 
-	a.dir = dir
-
-	return nil
+	return dir, nil
 }
 
-func (a *App) setupMinter() error {
+func (a *App) createMinter() (*token.Minter, error) {
 	keyPEM := caddy.NewReplacer().ReplaceAll(a.UserToken.PrivateKey, "")
 
 	minter, err := token.NewFromPEM([]byte(keyPEM))
 	if err != nil {
-		return fmt.Errorf("parse private key: %w", err)
+		return nil, fmt.Errorf("parse private key: %w", err)
 	}
 
-	a.minter = minter
-
-	return nil
+	return minter, nil
 }
 
 // GetInheritedProvider returns the OIDCProviderModule for the given name.
