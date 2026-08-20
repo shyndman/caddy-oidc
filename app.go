@@ -46,7 +46,8 @@ func parseGlobalConfig(d *caddyfile.Dispenser, prev any) (any, error) {
 		var mod = &app.Default
 
 		// If there is an argument, then define a named provider
-		if d.NextArg() {
+		namedProvider := d.NextArg()
+		if namedProvider {
 			var name = d.Val()
 
 			if app.Providers == nil {
@@ -63,7 +64,7 @@ func parseGlobalConfig(d *caddyfile.Dispenser, prev any) (any, error) {
 		}
 
 		for nesting := d.Nesting(); d.NextBlock(nesting); {
-			ok, err := unmarshalAppOrProviderToken(d, &app, mod)
+			ok, err := unmarshalGlobalToken(d, &app, mod, namedProvider)
 			if err != nil {
 				return nil, err
 			}
@@ -78,6 +79,19 @@ func parseGlobalConfig(d *caddyfile.Dispenser, prev any) (any, error) {
 		Name:  moduleID,
 		Value: caddyconfig.JSON(&app, nil),
 	}, nil
+}
+
+func unmarshalGlobalToken(
+	d *caddyfile.Dispenser,
+	app *App,
+	mod *OIDCProviderModule,
+	namedProvider bool,
+) (bool, error) {
+	if namedProvider {
+		return mod.UnmarshalCaddyfileToken(d)
+	}
+
+	return unmarshalAppOrProviderToken(d, app, mod)
 }
 
 // unmarshalAppOrProviderToken parses a single subdirective from the global
