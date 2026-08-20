@@ -39,21 +39,14 @@ type Session struct {
 	Claims    json.RawMessage `json:"c,omitempty"`
 }
 
-// A ClaimsDecoder is an interface for decoding JWT claims into a target JSON-decodable object.
-type ClaimsDecoder interface {
-	Claims(v any) error
-}
-
-// NewFromClaims creates a new session from JWT claims.
-// It assumes that the provided claims have been already validated.
+// NewFromIDToken creates a session from a verified ID token.
 //
-// The provided uidClaim is used to extract the username from the token's claims.
-// It must exist and be a string type in the token's claims.
-func NewFromClaims(uidClaim string, claims ClaimsDecoder) (*Session, error) {
-	// A bit of a hack to extract the original claims from the decoder
+// The uidClaim must identify a string claim in the token.
+func NewFromIDToken(uidClaim string, idToken *oidc.IDToken) (*Session, error) {
+	// Extract the original claims from the token.
 	var rawClaims *json.RawMessage
 
-	err := claims.Claims(&rawClaims)
+	err := idToken.Claims(&rawClaims)
 	if err != nil {
 		return nil, caddyhttp.Error(http.StatusUnauthorized, err)
 	}
@@ -64,10 +57,9 @@ func NewFromClaims(uidClaim string, claims ClaimsDecoder) (*Session, error) {
 	}
 
 	return &Session{
-		UID:    uid.String(),
-		Claims: *rawClaims,
-
-		// Expiry deliberately omitted as the OIDC verifier configuration will verify the token exp claim
+		UID:       uid.String(),
+		ExpiresAt: idToken.Expiry.Unix(),
+		Claims:    *rawClaims,
 	}, nil
 }
 

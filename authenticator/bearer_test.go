@@ -21,12 +21,14 @@ func TestBearerAuthenticator_AuthenticateRequest(t *testing.T) {
 		au  BearerAuthenticator
 	)
 
+	expiresAt := cfg.Now().Add(time.Hour)
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r.Header.Set("Authorization", "Bearer "+pkgtest.GenerateTestJWTExpiresAt(cfg.Now().Add(time.Hour)))
+	r.Header.Set("Authorization", "Bearer "+pkgtest.GenerateTestJWTExpiresAt(expiresAt))
 
 	s, err := au.AuthenticateRequest(&cfg, r)
 	require.NoError(t, err)
 	assert.Equal(t, "test", s.UID)
+	assert.Equal(t, expiresAt.Unix(), s.ExpiresAt)
 }
 
 func TestBearerAuthentication_AuthenticateRequest_WithoutBearerToken(t *testing.T) {

@@ -327,11 +327,12 @@ func TestOIDCMiddleware_MintsUserToken(t *testing.T) {
 			},
 		},
 	}
+	expiresAt := auth.provider.Clock().Add(time.Hour)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r = r.WithContext(context.WithValue(r.Context(), caddy.ReplacerCtxKey, caddy.NewReplacer()))
-	r.Header.Set("Authorization", "Bearer "+pkgtest.GenerateTestJWTExpiresAt(auth.provider.Clock().Add(time.Hour)))
+	r.Header.Set("Authorization", "Bearer "+pkgtest.GenerateTestJWTExpiresAt(expiresAt))
 
 	h := new(TestHandler)
 
@@ -358,6 +359,7 @@ func TestOIDCMiddleware_MintsUserToken(t *testing.T) {
 	assert.Equal(t, "Alice", claims.Name)
 	assert.Equal(t, []string{"admin", "reader"}, claims.Roles)
 	assert.Equal(t, auth.provider.Now().Unix(), claims.IssuedAt)
+	assert.Equal(t, expiresAt.Unix(), claims.ExpiresAt)
 }
 
 func TestOIDCMiddleware_MintsUserToken_NormalizesEmail(t *testing.T) {
@@ -371,7 +373,10 @@ func TestOIDCMiddleware_MintsUserToken_NormalizesEmail(t *testing.T) {
 	}
 
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	s := &session.Session{Claims: json.RawMessage(`{"email": "X@Example.ORG"}`)}
+	s := &session.Session{
+		ExpiresAt: auth.provider.Clock().Add(time.Hour).Unix(),
+		Claims:    json.RawMessage(`{"email": "X@Example.ORG"}`),
+	}
 
 	err := auth.mintUserToken(r, s)
 	require.NoError(t, err)

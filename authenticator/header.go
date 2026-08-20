@@ -69,7 +69,7 @@ func (au *HeaderAuthenticator) AuthenticateRequest(cfg OIDCConfiguration, r *htt
 		return nil, caddyhttp.Error(http.StatusUnauthorized, err)
 	}
 
-	return session.NewFromClaims(cfg.GetUsernameClaim(), id)
+	return session.NewFromIDToken(cfg.GetUsernameClaim(), id)
 }
 
 func (au *HeaderAuthenticator) StripRequest(r *http.Request) {
