@@ -34,11 +34,13 @@ func TestHeaderAuthenticator_AuthenticateRequest(t *testing.T) {
 		}
 	)
 
+	expiresAt := cfg.Now().Add(time.Hour)
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r.Header.Set("X-Api-Key", pkgtest.GenerateTestJWTExpiresAt(cfg.Now().Add(time.Hour)))
+	r.Header.Set("X-Api-Key", pkgtest.GenerateTestJWTExpiresAt(expiresAt))
 
-	_, err := au.AuthenticateRequest(&cfg, r)
+	s, err := au.AuthenticateRequest(&cfg, r)
 	require.NoError(t, err)
+	assert.Equal(t, expiresAt.Unix(), s.ExpiresAt)
 }
 
 func TestHeaderAuthenticator_AuthenticateRequest_MissingHeader(t *testing.T) {

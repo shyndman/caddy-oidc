@@ -60,7 +60,7 @@ func (*BearerAuthenticator) AuthenticateRequest(cfg OIDCConfiguration, r *http.R
 		return nil, caddyhttp.Error(http.StatusUnauthorized, err)
 	}
 
-	return session.NewFromClaims(cfg.GetUsernameClaim(), id)
+	return session.NewFromIDToken(cfg.GetUsernameClaim(), id)
 }
 
 func (*BearerAuthenticator) StripRequest(r *http.Request) {

@@ -24,7 +24,7 @@ type Claims struct {
 	Name      string   `json:"name,omitempty"`
 	Roles     []string `json:"roles,omitempty"`
 	IssuedAt  int64    `json:"iat"`
-	ExpiresAt int64    `json:"exp,omitempty"`
+	ExpiresAt int64    `json:"exp"`
 }
 
 // Minter signs user tokens with an ES256 private key.
@@ -104,18 +104,19 @@ func parseECPrivateKeyPEM(keyPEM []byte) (*ecdsa.PrivateKey, error) {
 	return key, nil
 }
 
-// Sign mints a signed user token. A zero expiresAt value produces a token
-// without an expiry claim.
+// Sign mints a signed user token.
 func (m *Minter) Sign(issuer, sub, name string, roles []string, issuedAt, expiresAt time.Time) (string, error) {
-	claims := Claims{
-		Issuer:   issuer,
-		Subject:  sub,
-		Name:     name,
-		Roles:    roles,
-		IssuedAt: issuedAt.Unix(),
+	if expiresAt.IsZero() {
+		return "", errors.New("user token expiry is required")
 	}
-	if !expiresAt.IsZero() {
-		claims.ExpiresAt = expiresAt.Unix()
+
+	claims := Claims{
+		Issuer:    issuer,
+		Subject:   sub,
+		Name:      name,
+		Roles:     roles,
+		IssuedAt:  issuedAt.Unix(),
+		ExpiresAt: expiresAt.Unix(),
 	}
 
 	payload, err := json.Marshal(claims)

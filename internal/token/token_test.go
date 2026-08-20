@@ -114,23 +114,13 @@ func TestSign_Verify(t *testing.T) {
 func TestSign_NoExpiry(t *testing.T) {
 	t.Parallel()
 
-	pemBytes, key := generateTestPEM(t)
+	pemBytes, _ := generateTestPEM(t)
 
 	m, err := NewFromPEM(pemBytes)
 	require.NoError(t, err)
 
-	sig, err := m.Sign("iss", "a@example.com", "", nil, time.Now(), time.Time{})
-	require.NoError(t, err)
-
-	jws, err := jose.ParseSignedCompact(sig, []jose.SignatureAlgorithm{jose.ES256})
-	require.NoError(t, err)
-
-	payload, err := jws.Verify(&key.PublicKey)
-	require.NoError(t, err)
-
-	var claims Claims
-	require.NoError(t, json.Unmarshal(payload, &claims))
-	assert.Equal(t, int64(0), claims.ExpiresAt)
+	_, err = m.Sign("iss", "a@example.com", "", nil, time.Now(), time.Time{})
+	require.EqualError(t, err, "user token expiry is required")
 }
 
 func TestJWKS(t *testing.T) {
@@ -156,7 +146,7 @@ func TestJWKS(t *testing.T) {
 	require.True(t, k.IsPublic())
 	assert.NotContains(t, string(raw), `"d"`)
 
-	sig, err := m.Sign("iss", "sub", "", nil, time.Now(), time.Time{})
+	sig, err := m.Sign("iss", "sub", "", nil, time.Now(), time.Now().Add(time.Hour))
 	require.NoError(t, err)
 
 	jws, err := jose.ParseSignedCompact(sig, []jose.SignatureAlgorithm{jose.ES256})
