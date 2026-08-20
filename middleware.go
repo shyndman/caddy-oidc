@@ -13,6 +13,7 @@ import (
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/shyndman/caddy-oidc/authenticator"
 	"github.com/shyndman/caddy-oidc/internal/baseline"
+	"github.com/shyndman/caddy-oidc/internal/directory"
 	"github.com/shyndman/caddy-oidc/request"
 	"github.com/shyndman/caddy-oidc/session"
 	"github.com/tidwall/gjson"
@@ -331,19 +332,21 @@ func (mw *OIDCMiddleware) mintUserToken(r *http.Request, s *session.Session) err
 		return nil
 	}
 
+	normalizedEmail := directory.NormalizeEmail(email.String())
+
 	var (
 		name  string
 		roles []string
 	)
 
 	if dir := mw.app.Directory(); dir != nil {
-		if u, ok := dir.User(email.String()); ok {
+		if u, ok := dir.User(normalizedEmail); ok {
 			name = u.Name
 			roles = u.Roles
 		}
 	}
 
-	tokenString, err := mw.app.minter.Sign(mw.provider.Issuer, email.String(), name, roles, mw.provider.Now(), s.Expires())
+	tokenString, err := mw.app.minter.Sign(mw.provider.Issuer, normalizedEmail, name, roles, mw.provider.Now(), s.Expires())
 	if err != nil {
 		return err
 	}
