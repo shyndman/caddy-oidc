@@ -647,6 +647,7 @@ allow {
 Matches the roles of the authenticated user from the authorization directory.
 
 A role match reads the email claim of the session and looks the user up in the directory. It matches when the user holds any of the configured roles. Multiple roles are treated as a logical OR.
+Role values support Caddy placeholders, which the matcher resolves for each request.
 
 ```caddyfile
 # Allow any user with the admin role

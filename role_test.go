@@ -133,6 +133,12 @@ func TestMatchRole_MatchWithError(t *testing.T) {
 			expect:  true,
 		},
 		{
+			name:    "match with placeholder",
+			roles:   []string{"{test.role}"},
+			session: &session.Session{Claims: json.RawMessage(`{"email": "x@example.org"}`)},
+			expect:  true,
+		},
+		{
 			name:    "match with different case",
 			roles:   []string{"admin"},
 			session: &session.Session{Claims: json.RawMessage(`{"email": "X@Example.ORG"}`)},
@@ -183,6 +189,9 @@ func TestMatchRole_MatchWithError(t *testing.T) {
 			matcher := &MatchRole{Roles: tt.roles, app: app}
 
 			r := httptest.NewRequest(http.MethodGet, "/", nil)
+			repl := caddy.NewReplacer()
+			repl.Set("test.role", "admin")
+			r = r.WithContext(context.WithValue(r.Context(), caddy.ReplacerCtxKey, repl))
 			if tt.session != nil {
 				r = r.WithContext(context.WithValue(r.Context(), SessionCtxKey, tt.session))
 			}

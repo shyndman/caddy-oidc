@@ -392,9 +392,10 @@ func (m *MatchRole) MatchWithError(r *http.Request) (bool, error) {
 	if !email.Exists() || email.Type != gjson.String {
 		return false, nil
 	}
+	repl := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer) //nolint:forcetypeassert
 
 	for _, role := range m.Roles {
-		if rt.directory.HasRole(email.String(), role) {
+		if rt.directory.HasRole(email.String(), repl.ReplaceAll(role, "")) {
 			return true, nil
 		}
 	}
