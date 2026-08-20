@@ -6,6 +6,7 @@ import (
 	"context"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -38,6 +39,13 @@ type Directory struct {
 	byEmail map[string]*User
 }
 
+// NormalizeEmail normalizes an email address for directory lookup and
+// identity. Email local-parts are case-insensitive in practice, so the
+// address is lowercased and surrounding whitespace is removed.
+func NormalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
 // Load reads all users and roles from the database through conn and builds an
 // in-memory index. The returned Directory is immutable.
 func Load(ctx context.Context, conn Queryer) (*Directory, error) {
@@ -58,10 +66,11 @@ func Load(ctx context.Context, conn Queryer) (*Directory, error) {
 			return nil, err
 		}
 
-		user := dir.byEmail[email]
+		key := NormalizeEmail(email)
+		user := dir.byEmail[key]
 		if user == nil {
 			user = &User{Name: name}
-			dir.byEmail[email] = user
+			dir.byEmail[key] = user
 		}
 
 		user.Roles = append(user.Roles, role)
@@ -85,7 +94,7 @@ func (d *Directory) User(email string) (*User, bool) {
 		return nil, false
 	}
 
-	u, ok := d.byEmail[email]
+	u, ok := d.byEmail[NormalizeEmail(email)]
 
 	return u, ok
 }

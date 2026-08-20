@@ -121,3 +121,32 @@ func TestLoad_QueryError(t *testing.T) {
 	_, err := Load(context.Background(), q)
 	require.Error(t, err)
 }
+
+func TestLoad_CaseInsensitive(t *testing.T) {
+	t.Parallel()
+
+	q := &fakeQueryer{
+		rows: &fakeRows{
+			rows: [][]string{
+				{"Steve.Flex@Example.com", "Steve", "admin"},
+			},
+		},
+	}
+
+	dir, err := Load(context.Background(), q)
+	require.NoError(t, err)
+
+	u, ok := dir.User("steve.flex@example.com")
+	require.True(t, ok)
+	assert.Equal(t, "Steve", u.Name)
+	assert.True(t, dir.HasRole("STEVE.FLEX@EXAMPLE.COM", "admin"))
+	assert.False(t, dir.HasRole("someone-else@example.com", "admin"))
+}
+
+func TestNormalizeEmail(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "a@example.com", NormalizeEmail("A@Example.COM"))
+	assert.Equal(t, "a@example.com", NormalizeEmail("  a@example.com  "))
+	assert.Equal(t, "a@example.com", NormalizeEmail("a@example.com"))
+}

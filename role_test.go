@@ -123,6 +123,12 @@ func TestMatchRole_MatchWithError(t *testing.T) {
 			expect:  true,
 		},
 		{
+			name:    "match with different case",
+			roles:   []string{"admin"},
+			session: &session.Session{Claims: json.RawMessage(`{"email": "X@Example.ORG"}`)},
+			expect:  true,
+		},
+		{
 			name:    "no matching role",
 			roles:   []string{"owner"},
 			session: &session.Session{Claims: json.RawMessage(`{"email": "x@example.org"}`)},
@@ -333,6 +339,41 @@ func TestOIDCMiddleware_MintsUserToken(t *testing.T) {
 	assert.Equal(t, "Alice", claims.Name)
 	assert.Equal(t, []string{"admin", "reader"}, claims.Roles)
 	assert.Equal(t, auth.provider.Now().Unix(), claims.IssuedAt)
+}
+
+func TestOIDCMiddleware_MintsUserToken_NormalizesEmail(t *testing.T) {
+	t.Parallel()
+
+	pemBytes, key := generateTestPrivateKey(t)
+
+	auth := &OIDCMiddleware{
+		provider: GenerateTestProvider(),
+		app:      &App{minter: testMinter(t, pemBytes), dir: testDirectory(t)},
+	}
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	s := &session.Session{Claims: json.RawMessage(`{"email": "X@Example.ORG"}`)}
+
+	err := auth.mintUserToken(r, s)
+	require.NoError(t, err)
+
+	bearer := r.Header.Get("Authorization")
+	require.True(t, len(bearer) > len("Bearer "))
+
+	tokenString := bearer[len("Bearer "):]
+
+	jws, err := jose.ParseSignedCompact(tokenString, []jose.SignatureAlgorithm{jose.ES256})
+	require.NoError(t, err)
+
+	payload, err := jws.Verify(&key.PublicKey)
+	require.NoError(t, err)
+
+	var claims token.Claims
+	require.NoError(t, json.Unmarshal(payload, &claims))
+
+	assert.Equal(t, "x@example.org", claims.Subject)
+	assert.Equal(t, "Alice", claims.Name)
+	assert.Equal(t, []string{"admin", "reader"}, claims.Roles)
 }
 
 func TestOIDCMiddleware_MintsNoToken_WhenNotConfigured(t *testing.T) {
