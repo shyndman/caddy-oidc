@@ -2,27 +2,18 @@ package caddy_oidc
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
-	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
-	"github.com/go-jose/go-jose/v4"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shyndman/caddy-oidc/internal/directory"
-	"github.com/shyndman/caddy-oidc/internal/pkgtest"
-	"github.com/shyndman/caddy-oidc/internal/token"
 	"github.com/shyndman/caddy-oidc/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -85,15 +76,6 @@ func testDirectory(t *testing.T) *directory.Directory {
 	return dir
 }
 
-func testMinter(t *testing.T, pemBytes []byte) *token.Minter {
-	t.Helper()
-
-	m, err := token.NewFromPEM(pemBytes)
-	require.NoError(t, err)
-
-	return m
-}
-
 // testAppWithRuntime returns an App whose runtime initializer returns the
 // given prebuilt state, so a test can isolate request-time behavior without
 // forcing database access or key parsing.
@@ -101,18 +83,6 @@ func testAppWithRuntime(runtime *appRuntime) *App {
 	a := newApp()
 	a.loadRuntime = sync.OnceValues(func() (*appRuntime, error) { return runtime, nil })
 	return a
-}
-
-func generateTestPrivateKey(t *testing.T) ([]byte, *ecdsa.PrivateKey) {
-	t.Helper()
-
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	der, err := x509.MarshalPKCS8PrivateKey(key)
-	require.NoError(t, err)
-
-	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), key
 }
 
 func TestMatchRole_MatchWithError(t *testing.T) {
@@ -310,161 +280,28 @@ func TestOIDCMiddleware_UnmarshalCaddyfile_RoleBlock(t *testing.T) {
 	assert.Equal(t, []string{"residents", "media_consumers"}, matcher.Roles)
 }
 
-func TestOIDCMiddleware_MintsUserToken(t *testing.T) {
+func TestMatchRole_RequestForcesInitializationBeforeStart(t *testing.T) {
 	t.Parallel()
 
-	pemBytes, key := generateTestPrivateKey(t)
+	var count atomic.Int32
 
-	auth := &OIDCMiddleware{
-		provider: GenerateTestProvider(),
-		app:      testAppWithRuntime(&appRuntime{minter: testMinter(t, pemBytes), directory: testDirectory(t)}),
-		Policies: Ruleset{
-			{
-				Action: ActionAllow,
-				Matchers: caddyhttp.MatcherSet{
-					&MatchUser{Usernames: []string{"*"}},
-				},
-			},
-		},
-	}
-	expiresAt := auth.provider.Clock().Add(time.Hour)
+	a := newApp()
+	a.loadRuntime = sync.OnceValues(func() (*appRuntime, error) {
+		count.Add(1)
+		return &appRuntime{directory: testDirectory(t)}, nil
+	})
+	matcher := &MatchRole{Roles: []string{"admin"}, app: a}
 
-	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r = r.WithContext(context.WithValue(r.Context(), caddy.ReplacerCtxKey, caddy.NewReplacer()))
-	r.Header.Set("Authorization", "Bearer "+pkgtest.GenerateTestJWTExpiresAt(expiresAt))
+	r = r.WithContext(context.WithValue(r.Context(), SessionCtxKey, &session.Session{
+		Claims: json.RawMessage(`{"email": "x@example.org"}`),
+	}))
 
-	h := new(TestHandler)
-
-	err := auth.ServeHTTP(w, r, h)
+	got, err := matcher.MatchWithError(r)
 	require.NoError(t, err)
-	assert.Equal(t, 1, h.calls)
+	assert.True(t, got)
 
-	bearer := r.Header.Get("Authorization")
-	require.True(t, len(bearer) > len("Bearer "))
-
-	tokenString := bearer[len("Bearer "):]
-
-	jws, err := jose.ParseSignedCompact(tokenString, []jose.SignatureAlgorithm{jose.ES256})
-	require.NoError(t, err)
-
-	payload, err := jws.Verify(&key.PublicKey)
-	require.NoError(t, err)
-
-	var claims token.Claims
-	require.NoError(t, json.Unmarshal(payload, &claims))
-
-	assert.Equal(t, auth.provider.Issuer, claims.Issuer)
-	assert.Equal(t, "x@example.org", claims.Subject)
-	assert.Equal(t, "Alice", claims.Name)
-	assert.Equal(t, []string{"admin", "reader"}, claims.Roles)
-	assert.Equal(t, auth.provider.Now().Unix(), claims.IssuedAt)
-	assert.Equal(t, expiresAt.Unix(), claims.ExpiresAt)
-}
-
-func TestOIDCMiddleware_MintsUserToken_NormalizesEmail(t *testing.T) {
-	t.Parallel()
-
-	pemBytes, key := generateTestPrivateKey(t)
-
-	auth := &OIDCMiddleware{
-		provider: GenerateTestProvider(),
-		app:      testAppWithRuntime(&appRuntime{minter: testMinter(t, pemBytes), directory: testDirectory(t)}),
-	}
-
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	s := &session.Session{
-		ExpiresAt: auth.provider.Clock().Add(time.Hour).Unix(),
-		Claims:    json.RawMessage(`{"email": "X@Example.ORG"}`),
-	}
-
-	err := auth.mintUserToken(r, s)
-	require.NoError(t, err)
-
-	bearer := r.Header.Get("Authorization")
-	require.True(t, len(bearer) > len("Bearer "))
-
-	tokenString := bearer[len("Bearer "):]
-
-	jws, err := jose.ParseSignedCompact(tokenString, []jose.SignatureAlgorithm{jose.ES256})
-	require.NoError(t, err)
-
-	payload, err := jws.Verify(&key.PublicKey)
-	require.NoError(t, err)
-
-	var claims token.Claims
-	require.NoError(t, json.Unmarshal(payload, &claims))
-
-	assert.Equal(t, "x@example.org", claims.Subject)
-	assert.Equal(t, "Alice", claims.Name)
-	assert.Equal(t, []string{"admin", "reader"}, claims.Roles)
-}
-
-func TestOIDCMiddleware_MintsNoToken_WhenNotConfigured(t *testing.T) {
-	t.Parallel()
-
-	auth := &OIDCMiddleware{
-		provider: GenerateTestProvider(),
-		app:      testAppWithRuntime(&appRuntime{directory: testDirectory(t)}),
-		Policies: Ruleset{
-			{
-				Action: ActionAllow,
-				Matchers: caddyhttp.MatcherSet{
-					&MatchUser{Usernames: []string{"*"}},
-				},
-			},
-		},
-	}
-
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r = r.WithContext(context.WithValue(r.Context(), caddy.ReplacerCtxKey, caddy.NewReplacer()))
-	r.Header.Set("Authorization", "Bearer "+pkgtest.GenerateTestJWTExpiresAt(auth.provider.Clock().Add(time.Hour)))
-
-	h := new(TestHandler)
-
-	err := auth.ServeHTTP(w, r, h)
-	require.NoError(t, err)
-	assert.Empty(t, r.Header.Get("Authorization"))
-}
-
-func TestOIDCMiddleware_ServeHTTP_WellKnownJWKS(t *testing.T) {
-	t.Parallel()
-
-	pemBytes, _ := generateTestPrivateKey(t)
-
-	auth := &OIDCMiddleware{
-		provider: GenerateTestProvider(),
-		app:      testAppWithRuntime(&appRuntime{minter: testMinter(t, pemBytes)}),
-	}
-
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, WellKnownJWKSURLPath, nil)
-
-	err := auth.ServeHTTP(w, r, new(TestHandler))
-	require.NoError(t, err)
-	assert.Equal(t, "application/jwk-set+json", w.Header().Get("Content-Type"))
-
-	var set jose.JSONWebKeySet
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &set))
-	assert.Len(t, set.Keys, 1)
-	require.NotEmpty(t, set.Keys[0].KeyID)
-}
-
-func TestOIDCMiddleware_ServeHTTP_WellKnownJWKS_NotConfigured(t *testing.T) {
-	t.Parallel()
-
-	auth := &OIDCMiddleware{
-		provider: GenerateTestProvider(),
-		app:      testAppWithRuntime(&appRuntime{}),
-	}
-
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, WellKnownJWKSURLPath, nil)
-
-	err := auth.ServeHTTP(w, r, new(TestHandler))
-	var he caddyhttp.HandlerError
-	if assert.ErrorAs(t, err, &he) {
-		assert.Equal(t, http.StatusNotFound, he.StatusCode)
-	}
+	require.NoError(t, a.Start())
+	require.Equal(t, int32(1), count.Load())
 }

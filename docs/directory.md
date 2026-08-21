@@ -1,14 +1,14 @@
-# Directory and User Token
+# Authorization Directory
 
 ## Purpose
 
-This fork adds authorization roles from a PostgreSQL database to caddy-oidc. It also mints a signed user token for application servers.
+This fork adds authorization roles from a PostgreSQL database to caddy-oidc.
 
 Each configuration initializes one directory snapshot. The proxy loads the users, the roles, and the links between them into memory when the configuration starts. An early request can force the same one-time load and waits for it. A Caddy reload builds a new configuration. The proxy loads a new snapshot at each reload.
 
 ## Configuration
 
-The global `oidc` directive gains two options.
+The global `oidc` directive gains one option.
 
 ```caddyfile
 {
@@ -23,17 +23,11 @@ The global `oidc` directive gains two options.
             secret "{env.COOKIE_SECRET}"
             claim email
         }
-
-        user_token {
-            private_key "{env.SIGNING_PRIVATE_KEY}"
-        }
     }
 }
 ```
 
 `postgres` sets the connection string for the database. The PostgreSQL role that the connection uses holds SELECT grants only.
-
-`user_token` enables the minted user token. `private_key` supplies the ES256 private key in PEM form. The proxy resolves placeholder values at one-time initialization.
 
 ### Handler
 
@@ -91,37 +85,6 @@ The `role` matcher checks a session against the directory. A session carries the
 The matcher reads the email claim from the request context. Then it looks the email up in the loaded directory. It matches when the directory holds any of the configured roles.
 
 An anonymous session has no email claim. The matcher never matches an anonymous session.
-
-## User Token
-
-After authorization passes, the proxy mints a user token. It signs the token with the configured private key.
-
-The token carries these claims:
-
-- `sub` holds the user email.
-- `roles` holds the role set.
-- `name` holds the display name.
-- `iss` holds the OIDC issuer. `iat` and `exp` hold the issue and expiry times.
-
-The token carries no audience. Application servers identify the signing key from the JWKS endpoint.
-
-`exp` matches the session expiry. The proxy injects the token into the upstream request as an `Authorization: Bearer` header.
-
-The token replaces the claim headers as the identity mechanism for application servers. The proxy does not forward separate claim headers to the applications.
-
-Application servers verify the token signature and read the identity directly. They need no session store and no database access.
-
-The proxy mints a fresh token for each request. Each token reflects the current directory snapshot. The signing cost is one ES256 operation per request.
-
-The directory is the authorization source. The proxy mints the token after authorization passes. The directory and the token always agree within a request.
-
-## JWKS Endpoint
-
-The proxy exposes the public key for token verification at a standard well-known endpoint.
-
-`/.well-known/jwks.json`
-
-The endpoint requires no authentication. Application servers fetch the public key from this endpoint to verify token signatures. The `user_token` block on the global directive enables the endpoint.
 
 ## Reload Behavior
 

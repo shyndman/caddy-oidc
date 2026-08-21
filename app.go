@@ -17,7 +17,6 @@ import (
 	_ "github.com/shyndman/caddy-oidc/authenticator" // Registers the built-in authenticator modules
 	"github.com/shyndman/caddy-oidc/internal/baseline"
 	"github.com/shyndman/caddy-oidc/internal/directory"
-	"github.com/shyndman/caddy-oidc/internal/token"
 )
 
 const moduleID = "oidc"
@@ -96,31 +95,14 @@ func unmarshalGlobalToken(
 }
 
 // unmarshalAppOrProviderToken parses a single subdirective from the global
-// oidc block. App-level options (postgres, user_token) apply to App; the rest
-// are delegated to the provider.
+// oidc block. App-level options (postgres) apply to App; the rest are
+// delegated to the provider.
 func unmarshalAppOrProviderToken(d *caddyfile.Dispenser, app *App, mod *OIDCProviderModule) (bool, error) {
 	switch d.Val() {
 	case "postgres":
 		if !d.Args(&app.Postgres) {
 			return false, d.ArgErr()
 		}
-
-		return true, nil
-	case "user_token":
-		cfg := new(UserTokenConfig)
-
-		for nesting := d.Nesting(); d.NextBlock(nesting); {
-			switch d.Val() {
-			case "private_key":
-				if !d.Args(&cfg.PrivateKey) {
-					return false, d.ArgErr()
-				}
-			default:
-				return false, d.SyntaxErr("unrecognized user_token subdirective")
-			}
-		}
-
-		app.UserToken = cfg
 
 		return true, nil
 	default:
@@ -159,21 +141,16 @@ type App struct {
 	// loaded into memory at each startup.
 	Postgres string `json:"postgres,omitempty"`
 
-	// UserToken configures the signed user token that identifies the
-	// authenticated user to downstream services.
-	UserToken *UserTokenConfig `json:"user_token,omitempty"`
-
-	// loadRuntime initializes once and caches the authorization directory and
-	// user token signer. It is normally forced by Start, but an early request
-	// can force the same one-time load and wait for its result.
+	// loadRuntime initializes once and caches the authorization directory. It
+	// is normally forced by Start, but an early request can force the same
+	// one-time load and wait for its result.
 	loadRuntime func() (*appRuntime, error)
 }
 
 // appRuntime is the immutable runtime state of the app. It is published as a
-// unit so no reader observes a partially initialized directory or signer.
+// unit so no reader observes a partially initialized directory.
 type appRuntime struct {
 	directory *directory.Directory
-	minter    *token.Minter
 }
 
 // newApp creates an App with a one-time runtime initializer that reads the
@@ -190,14 +167,6 @@ func (a *App) runtime() (*appRuntime, error) {
 	return a.loadRuntime()
 }
 
-// UserTokenConfig holds the configuration for the signed user token.
-type UserTokenConfig struct {
-	// PrivateKey is the PEM-encoded ES256 (P-256) private key used to sign
-	// user tokens. It supports Caddy placeholders such as {env.KEY} and
-	// {file./path/to/key}.
-	PrivateKey string `json:"private_key"`
-}
-
 func (*App) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
 		ID:  moduleID,
@@ -212,7 +181,7 @@ const directoryLoadTimeout = 10 * time.Second
 // Start forces the one-time runtime initialization and reports its result.
 // On failure, the configuration fails to load and Caddy keeps serving the
 // previous configuration. After initialization, request paths use the cached
-// directory and signer; they never touch the database.
+// directory; they never touch the database.
 func (a *App) Start() error {
 	_, err := a.runtime()
 	return err
@@ -220,9 +189,8 @@ func (a *App) Start() error {
 
 func (*App) Stop() error { return nil }
 
-// initializeRuntime constructs the authorization directory and user token
-// signer as local values and publishes them together. It returns no partial
-// state after a failure.
+// initializeRuntime constructs the authorization directory as a local value
+// and publishes it. It returns no partial state after a failure.
 func (a *App) initializeRuntime() (*appRuntime, error) {
 	rt := &appRuntime{}
 
@@ -232,14 +200,6 @@ func (a *App) initializeRuntime() (*appRuntime, error) {
 			return nil, fmt.Errorf("oidc: load authorization directory: %w", err)
 		}
 		rt.directory = dir
-	}
-
-	if a.UserToken != nil {
-		minter, err := a.createMinter()
-		if err != nil {
-			return nil, fmt.Errorf("oidc: set up user token signer: %w", err)
-		}
-		rt.minter = minter
 	}
 
 	return rt, nil
@@ -261,17 +221,6 @@ func (a *App) loadDirectory() (*directory.Directory, error) {
 	}
 
 	return dir, nil
-}
-
-func (a *App) createMinter() (*token.Minter, error) {
-	keyPEM := caddy.NewReplacer().ReplaceAll(a.UserToken.PrivateKey, "")
-
-	minter, err := token.NewFromPEM([]byte(keyPEM))
-	if err != nil {
-		return nil, fmt.Errorf("parse private key: %w", err)
-	}
-
-	return minter, nil
 }
 
 // GetInheritedProvider returns the OIDCProviderModule for the given name.

@@ -3,15 +3,12 @@ package caddy_oidc
 import (
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
-	"github.com/go-jose/go-jose/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -97,48 +94,33 @@ func TestParseGlobalConfig_AppDirectivesAcceptedInDefaultBlock(t *testing.T) {
 
 	_, app := parseGlobalOIDCConfig(t, nil, `oidc {
 		postgres postgres://directory
-		user_token {
-			private_key /run/secrets/user-token.pem
-		}
 	}`)
 
 	assert.Equal(t, "postgres://directory", app.Postgres)
-	require.NotNil(t, app.UserToken)
-	assert.Equal(t, "/run/secrets/user-token.pem", app.UserToken.PrivateKey)
 }
 
 func TestParseGlobalConfig_AppDirectivesRejectedInNamedProvider(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name  string
-		input string
-	}{
-		{
-			name: "postgres",
-			input: `oidc named {
-				postgres postgres://directory
-			}`,
-		},
-		{
-			name: "user_token",
-			input: `oidc named {
-				user_token {
-					private_key /run/secrets/user-token.pem
-				}
-			}`,
-		},
-	}
+	d := caddyfile.NewTestDispenser(`oidc named {
+		postgres postgres://directory
+	}`)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
+	_, err := parseGlobalConfig(d, nil)
+	require.ErrorContains(t, err, "unrecognized subdirective")
+}
 
-			d := caddyfile.NewTestDispenser(tt.input)
-			_, err := parseGlobalConfig(d, nil)
-			require.ErrorContains(t, err, "unrecognized subdirective")
-		})
-	}
+func TestParseGlobalConfig_UserTokenRejected(t *testing.T) {
+	t.Parallel()
+
+	d := caddyfile.NewTestDispenser(`oidc {
+		user_token {
+			private_key /run/secrets/user-token.pem
+		}
+	}`)
+
+	_, err := parseGlobalConfig(d, nil)
+	require.ErrorContains(t, err, "unrecognized subdirective")
 }
 
 func parseGlobalOIDCConfig(t *testing.T, prev any, input string) (httpcaddyfile.App, App) {
@@ -158,33 +140,6 @@ func parseGlobalOIDCConfig(t *testing.T, prev any, input string) (httpcaddyfile.
 	require.NoError(t, err)
 
 	return globalApp, app
-}
-
-// TestAppRuntime_RequestForcesInitializationBeforeStart proves the production
-// path: a request can trigger the one-time load before Start runs, and Start
-// then reports success without re-initializing.
-func TestAppRuntime_RequestForcesInitializationBeforeStart(t *testing.T) {
-	t.Parallel()
-
-	pemBytes, _ := generateTestPrivateKey(t)
-
-	a := newApp()
-	a.UserToken = &UserTokenConfig{PrivateKey: string(pemBytes)}
-
-	mw := &OIDCMiddleware{app: a, provider: GenerateTestProvider()}
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, WellKnownJWKSURLPath, nil)
-
-	err := mw.ServeHTTP(w, r, new(TestHandler))
-	require.NoError(t, err)
-	assert.Equal(t, "application/jwk-set+json", w.Header().Get("Content-Type"))
-
-	var set jose.JSONWebKeySet
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &set))
-	assert.Len(t, set.Keys, 1)
-	require.NotEmpty(t, set.Keys[0].KeyID)
-
-	require.NoError(t, a.Start())
 }
 
 // TestAppRuntime_ConcurrentInitializersRunOnce proves that concurrent request

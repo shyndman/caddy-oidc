@@ -229,6 +229,7 @@ func TestOIDCMiddleware_ServeHTTP_BearerOK(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, 1, h.calls)
+	assert.Empty(t, r.Header.Get("Authorization"))
 }
 
 func TestOIDCMiddleware_ServeHTTP_WithBearerAuthentication_EmptyRuleset(t *testing.T) {

@@ -145,7 +145,6 @@ example.com {
 | `authenticate`                | (optional) Configure [authentication methods](#authentication)                                                                                        |          |
 | `token_params`                | (optional) Additional key-value parameters for the OAuth code exchange. Values support Caddy placeholders. See [Token Parameters](#token-parameters). |          |
 | `postgres <url>`              | (optional) The connection string for a read-only PostgreSQL database that supplies the [authorization directory](#authorization-directory).                  |          |
-| `user_token`                  | (optional) Configure the signed [user token](#user-token) for downstream services.                                                                      |          |
 
 ### Default Provider
 
@@ -172,7 +171,7 @@ The schema lives in `schema.sql` at the repository root. The proxy never writes 
 
 Each configuration initializes one directory snapshot. Caddy normally initializes the directory when the app starts. An early request can force the same one-time load and waits for it. The proxy does not touch the database after initialization. A Caddy `reload` builds a new configuration, so the proxy loads a new snapshot at each reload. If the database is unreachable, the reload fails and Caddy keeps serving the previous configuration.
 
-The identity of a session is the email claim. The session must carry the email claim for the directory and the user token to work. With the cookie authenticator, copy the claim with the `claim email` option.
+The identity of a session is the email claim. The session must carry the email claim for the directory to work. With the cookie authenticator, copy the claim with the `claim email` option.
 
 ```caddyfile
 {
@@ -215,29 +214,6 @@ oidc {
 ```
 
 The shorthand `oidc allow residents, media_consumers` on a single line uses the default provider. Use the block form when a provider name or further configuration is needed.
-
-### User Token
-
-`user_token` configures a signed user token. After authorization passes, the proxy mints a fresh token for the authenticated user. It sends the token to the application as an `Authorization: Bearer` header.
-
-The token carries the email as the subject, the roles, the display name, the issue time, and the expiry. The expiry matches the session expiry.
-
-The token replaces the claim headers as the identity mechanism for application servers. Application servers verify the signature and read the identity directly. They need no session store and no database access.
-
-The proxy signs the token with an ES256 (P-256) private key. The key may be in PKCS#8 or SEC1 form.
-
-```caddyfile
-user_token {
-    private_key "{env.USER_TOKEN_PRIVATE_KEY}"
-}
-```
-
-The `private_key` option supports Caddy placeholders, such as `{env.USER_TOKEN_PRIVATE_KEY}` or `{file./path/to/key}`.
-
-The proxy exposes the public key for verification at `/.well-known/jwks.json`. The endpoint requires no authentication.
-
-> [!NOTE]
-> The proxy mints a fresh token for each request. Token roles always reflect the current directory. Role changes take effect at the next reload.
 
 ### Authentication
 
