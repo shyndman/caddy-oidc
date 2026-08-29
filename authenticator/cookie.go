@@ -372,10 +372,10 @@ func (au *SessionCookieAuthenticator) NewCookie(value string) *http.Cookie {
 	return cookie
 }
 
-// CSRFToken is the CSRF cookie payload when perform an OAuth2 Authorization Flow.
+// CSRFToken is the CSRF cookie payload when performing an OAuth2 Authorization Flow.
 type CSRFToken struct {
 	PKCEVerifier string `json:"v"`
-	RedirectURI  string `json:"r"`
+	ReturnURL    string `json:"r"`
 }
 
 // GetAbsRedirectURI returns the absolute redirect URI, resolving it relative to the request URL if necessary.
@@ -388,14 +388,15 @@ func (au *SessionCookieAuthenticator) GetAbsRedirectURI(r *http.Request) *url.UR
 }
 
 // StartLogin starts the authorization flow by setting the state cookie and redirecting to the authorization endpoint.
-// The state cookie is in the format of `<cookie_name>|<state>`, with the value containing the PKCE code verifier.
+// The state cookie is in the format of `<cookie_name>|<state>`, with the value containing the PKCE code verifier
+// and the original fully qualified request URL.
 // The OAuth2 redirect URI is set to the configured redirect URI made absolute relative to the request URL.
 func (au *SessionCookieAuthenticator) StartLogin(cfg OAuthAuthorizationFlowConfiguration, rw http.ResponseWriter, r *http.Request) error {
 	var (
 		state             = uuid.New().String()
 		pkceVerifier      = oauth2.GenerateVerifier()
 		csrfCookieName    = fmt.Sprintf("%s|%s", au.Name, state)
-		csrfCookiePayload = &CSRFToken{PKCEVerifier: pkceVerifier, RedirectURI: r.RequestURI}
+		csrfCookiePayload = &CSRFToken{PKCEVerifier: pkceVerifier, ReturnURL: request.URL(r).String()}
 	)
 
 	csrfCookieValue, err := au.secure.Encode(csrfCookieName, csrfCookiePayload)
@@ -551,13 +552,13 @@ func (au *SessionCookieAuthenticator) HandleCallback(cfg OAuthAuthorizationFlowC
 
 	http.SetCookie(rw, au.NewCookie(cookieValue))
 
-	// Redirect to the configured redirect URI
-	var redirectURI = csrfToken.RedirectURI
-	if redirectURI == "" {
-		redirectURI = "/" // Fall back to root
+	// Redirect to the original fully qualified request URL.
+	var returnURL = csrfToken.ReturnURL
+	if returnURL == "" {
+		returnURL = "/" // Fall back to root
 	}
 
-	http.Redirect(rw, r, redirectURI, http.StatusFound)
+	http.Redirect(rw, r, returnURL, http.StatusFound)
 
 	return nil
 }

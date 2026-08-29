@@ -152,6 +152,45 @@ func TestSessionCookieAuthenticator_GetAbsRedirectUri(t *testing.T) {
 	}
 }
 
+func TestSessionCookieAuthenticator_StartLogin_StoresOriginalURL(t *testing.T) {
+	t.Parallel()
+
+	au := &SessionCookieAuthenticator{
+		Name:   "test-cookie",
+		Secret: "Y4lbVNr01M4NyBCUSNbrAL4cavA6kjdM",
+	}
+
+	ctx, cancel := caddy.NewContext(caddy.Context{Context: context.Background()})
+	defer cancel()
+
+	err := au.Provision(ctx)
+	require.NoError(t, err)
+
+	r := httptest.NewRequest(http.MethodGet, "https://storage.don.haus/ui/?dataset=main", nil)
+	w := httptest.NewRecorder()
+
+	err = au.StartLogin(&testHandleCallbackConfiguration{}, w, r)
+	require.NoError(t, err)
+
+	var csrfCookie *http.Cookie
+
+	for _, cookie := range w.Result().Cookies() {
+		if cookie.Name != au.Name {
+			csrfCookie = cookie
+
+			break
+		}
+	}
+
+	require.NotNil(t, csrfCookie)
+
+	var token CSRFToken
+
+	err = au.secure.Decode(csrfCookie.Name, csrfCookie.Value, &token)
+	require.NoError(t, err)
+	assert.Equal(t, "https://storage.don.haus/ui/?dataset=main", token.ReturnURL)
+}
+
 func TestSessionCookieAuthenticator_AuthenticateRequest_WithCookie(t *testing.T) {
 	t.Parallel()
 
@@ -366,7 +405,7 @@ func TestSessionCookieAuthenticator_HandleCallback_CopiesClaimsAsRawJSON(t *test
 
 	csrfCookieValue, err := au.secure.Encode(au.Name+"|"+state, &CSRFToken{
 		PKCEVerifier: "test-pkce-verifier",
-		RedirectURI:  "/original",
+		ReturnURL:    "https://storage.don.haus/original?dataset=main",
 	})
 	require.NoError(t, err)
 
@@ -392,7 +431,7 @@ func TestSessionCookieAuthenticator_HandleCallback_CopiesClaimsAsRawJSON(t *test
 	err = au.HandleCallback(cfg, w, r)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusFound, w.Code)
-	assert.Equal(t, "/original", w.Header().Get("Location"))
+	assert.Equal(t, "https://storage.don.haus/original?dataset=main", w.Header().Get("Location"))
 
 	var sessionCookie *http.Cookie
 
@@ -443,7 +482,7 @@ func TestSessionCookieAuthenticator_HandleCallback_MaxAge(t *testing.T) {
 
 	csrfCookieValue, err := au.secure.Encode(au.Name+"|"+state, &CSRFToken{
 		PKCEVerifier: "test-pkce-verifier",
-		RedirectURI:  "/original",
+		ReturnURL:    "/original",
 	})
 	require.NoError(t, err)
 
