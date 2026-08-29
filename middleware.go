@@ -16,6 +16,7 @@ import (
 	"github.com/shyndman/caddy-oidc/request"
 	"github.com/shyndman/caddy-oidc/session"
 	"github.com/tidwall/gjson"
+	"go.uber.org/zap"
 )
 
 func init() {
@@ -233,7 +234,12 @@ func (mw *OIDCMiddleware) interceptRequest(rw http.ResponseWriter, r *http.Reque
 	if r.Method == http.MethodGet {
 		cookie, ok := authenticator.GetAuthenticator[*authenticator.SessionCookieAuthenticator](&mw.provider.Authenticators)
 		if ok && cookie.IsCallbackURL(r) {
-			return true, cookie.HandleCallback(mw.provider, rw, r)
+			err := cookie.HandleCallback(mw.provider, rw, r)
+			if err != nil {
+				mw.provider.Log.Error("OIDC callback failed", zap.Error(err), zap.String("host", r.Host))
+			}
+
+			return true, err
 		}
 	}
 

@@ -19,6 +19,8 @@ import (
 	"github.com/shyndman/caddy-oidc/internal/pkgtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 var testPolicyProvisioned atomic.Bool
@@ -149,6 +151,26 @@ func TestOIDCMiddleware_ServeHTTP_WithoutAuth_AuthorizationFlowSupported(t *test
 	if assert.NoError(t, err) {
 		assert.Equal(t, fmt.Sprintf("%s|%s", "test-cookie", redir.Query().Get("state")), c.Name)
 	}
+}
+
+func TestOIDCMiddleware_ServeHTTP_LogsCallbackFailure(t *testing.T) {
+	t.Parallel()
+
+	provider := GenerateTestProvider()
+	core, logs := observer.New(zap.ErrorLevel)
+	provider.Log = zap.New(core)
+	auth := &OIDCMiddleware{provider: provider}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "http://example.com/oauth2/callback?state=missing", nil)
+
+	err := auth.ServeHTTP(w, r, new(TestHandler))
+	require.Error(t, err)
+
+	require.Equal(t, 1, logs.Len())
+	entry := logs.All()[0]
+	assert.Equal(t, "OIDC callback failed", entry.Message)
+	assert.Equal(t, "example.com", entry.ContextMap()["host"])
+	assert.Contains(t, entry.ContextMap()["error"], "invalid CSRF cookie")
 }
 
 func TestOIDCMiddleware_ServeHTTP_WithoutAuth_BearerOnly(t *testing.T) {
